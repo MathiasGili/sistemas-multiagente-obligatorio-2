@@ -6,6 +6,7 @@ from pettingzoo.classic import leduc_holdem_v4 as leduc
 from base.game import AlternatingGame, AgentID, ActionType
 import numpy as np
 from functools import reduce
+import copy
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -54,6 +55,26 @@ class Leduc(AlternatingGame):
 
     def available_actions(self):
         return list(self.env.next_legal_moves)
+    
+    def clone(self):
+        game = Leduc(render_mode=self.render_mode)
+        game.env.env = copy.deepcopy(self.env.env)
+        game._hist = self._hist
+        for attr in [
+            'agents',
+            'agent_selection',
+            'rewards',
+            'terminations',
+            'truncations',
+            'infos',
+            'next_legal_moves',
+            '_cumulative_rewards',
+            '_last_obs',
+        ]:
+            if hasattr(self.env, attr):
+                setattr(game.env, attr, copy.deepcopy(getattr(self.env, attr)))
+        game._update()
+        return game
     
     def close(self):
         self.env.close()
