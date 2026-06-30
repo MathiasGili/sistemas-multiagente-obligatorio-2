@@ -12,47 +12,40 @@ class Node():
         self.obs = obs
         self.num_actions = self.game.num_actions(self.agent)
         self.cum_regrets = np.zeros(self.num_actions)
-        self.curr_policy = np.full(self.num_actions, 1/self.num_actions)
-        self.sum_policy = self.curr_policy.copy()
-        self.learned_policy = self.curr_policy.copy()
-        self.niter = 1
+        self.sum_policy = np.zeros(self.num_actions)
 
-    def masked_policy(self, policy, legal_actions):
-        masked = np.zeros(self.num_actions)
-        masked[legal_actions] = policy[legal_actions]
-        total = masked.sum()
-        if total > 0:
-            return masked / total
+        self.legal_actions = self.game.available_actions()
+        self.curr_policy = np.zeros(self.num_actions)
+        self.curr_policy[self.legal_actions] = 1 / len(self.legal_actions)
 
-        masked[legal_actions] = 1 / len(legal_actions)
-        return masked
-
-    def regret_matching(self, legal_actions):
+    def regret_matching(self):
         positive = np.maximum(self.cum_regrets, 0.0)
-        self.curr_policy = self.masked_policy(positive, legal_actions)
-        
-        self.niter += 1
-    
-    def update(self, utility, node_utility, probability, legal_actions) -> None:
-        # counterfactual reach: product of reach probabilities of all players except this agent
+        if positive.sum() > 0:
+            self.curr_policy = positive / positive.sum()
+        else:
+            self.curr_policy = np.zeros(self.num_actions)
+            self.curr_policy[self.legal_actions] = 1 / len(self.legal_actions)
+
+    def update(self, utility, node_utility, probability) -> None:
+        # Probabilidad de alcance de este nodo (excluyendo al agente actual)
         agent_idx = self.game.agent_name_mapping[self.agent]
-        cf_reach = np.prod(np.delete(probability, agent_idx))
+        reach = np.prod(np.delete(probability, agent_idx))
 
-        # accumulate counterfactual regrets
-        self.cum_regrets[legal_actions] += cf_reach * (utility[legal_actions] - node_utility)
+        # Acumulo regrets ponderados por la probabilidad de alcance del nodo
+        self.cum_regrets[self.legal_actions] += reach * (utility[self.legal_actions] - node_utility)
 
-        # regret matching policy (also updates the cumulative average policy)
-        self.regret_matching(legal_actions)  
+        # Regret matching para actualizar la política actual
+        self.regret_matching()  
 
-        # own_reach = probability[agent_idx]
-        self.sum_policy += self.curr_policy
-        self.learned_policy = self.sum_policy / self.niter
+        # Acumulo la política actual ponderada por la probabilidad de alcance del nodo
+        # CFR llega a equilibrio de Nash en promedio, no en la política actual
+        self.sum_policy += probability[agent_idx] * self.curr_policy
 
-    def policy(self, legal_actions=None):
-        if legal_actions is not None:
-            return self.masked_policy(self.learned_policy, legal_actions)
-
-        return self.learned_policy
+    def policy(self):
+        total = self.sum_policy.sum()
+        if total > 0:
+            return self.sum_policy / total
+        return self.curr_policy
 
 class CounterFactualRegret(Agent):
 
@@ -64,11 +57,10 @@ class CounterFactualRegret(Agent):
         obs = self.game.observe(self.agent)
         try:
             node = self.node_dict[obs]
-            policy = node.policy(self.game.available_actions())
+            policy = node.policy()
             a = np.argmax(np.random.multinomial(1, policy, size=1))
             return a
         except KeyError:
-            #raise ValueError('Train agent before calling action()')
             print(f'Node {obs} does not exist. Playing random.')
             return np.random.choice(self.game.available_actions())
     
@@ -87,37 +79,28 @@ class CounterFactualRegret(Agent):
         return utility 
 
     def cfr_rec(self, game: AlternatingGame, agent: AgentID, probability: ndarray):
-        # terminal state: return the reward for the agent we are computing the value for
         if game.done():
             return game.reward(agent)
 
-        # player to move at this state
         node_agent = game.agent_selection
         node_agent_idx = game.agent_name_mapping[node_agent]
         obs = game.observe(node_agent)
 
-        # retrieve (or create) the information set node
         if obs not in self.node_dict:
             self.node_dict[obs] = Node(game, obs)
         node = self.node_dict[obs]
-        legal_actions = game.available_actions()
-        curr_policy = node.masked_policy(node.curr_policy, legal_actions)
 
-        # evaluate the utility of every available action
         utility = np.zeros(node.num_actions)
-        for a in legal_actions:
+        for a in game.available_actions():
             next_game = game.clone()
             next_game.step(a)
             next_probability = probability.copy()
-            next_probability[node_agent_idx] = curr_policy[a] * probability[node_agent_idx]
+            next_probability[node_agent_idx] = node.curr_policy[a] * probability[node_agent_idx]
             utility[a] = self.cfr_rec(game=next_game, agent=agent, probability=next_probability)
 
-        # expected utility of this node under the current policy
-        node_utility = np.dot(curr_policy, utility)
+        node_utility = np.dot(node.curr_policy, utility)
 
-        # only update regrets when it is this agent's decision node
         if node_agent == agent:
-            node.update(utility, node_utility, probability, legal_actions)
+            node.update(utility, node_utility, probability)
 
         return node_utility
-        
