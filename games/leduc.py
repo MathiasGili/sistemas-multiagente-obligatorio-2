@@ -3,6 +3,7 @@ from numpy import ndarray
 from gymnasium.spaces import Discrete, Text, Dict, Tuple
 from pettingzoo.utils import agent_selector
 from pettingzoo.classic import leduc_holdem_v4 as leduc
+from rlcard.games.base import Card
 from base.game import AlternatingGame, AgentID, ActionType
 import numpy as np
 from functools import reduce
@@ -55,6 +56,29 @@ class Leduc(AlternatingGame):
 
     def available_actions(self):
         return list(self.env.next_legal_moves)
+    
+    def random_change(self, agent: AgentID):
+        agent_idx = self.agent_name_mapping[agent]
+        other_idx = 1 - agent_idx
+
+        new_game = self.clone()
+        leduc_game = new_game.env.env.game
+
+        agent_card = leduc_game.players[agent_idx].hand
+        public_card = leduc_game.public_card
+        full_deck = [Card(suit, rank) for suit in ['S', 'H'] for rank in ['J', 'Q', 'K']]
+
+        possible_cards = [card for card in full_deck if card != agent_card and card != public_card]
+        other_card = possible_cards[np.random.choice(len(possible_cards))]
+        leduc_game.players[other_idx].hand = other_card
+
+        leduc_game.dealer.deck = [
+            card for card in full_deck
+            if card != agent_card and card != other_card and card != public_card
+        ]
+        np.random.shuffle(leduc_game.dealer.deck)
+
+        return new_game
     
     def clone(self):
         game = Leduc(render_mode=self.render_mode)
