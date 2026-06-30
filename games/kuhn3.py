@@ -126,6 +126,16 @@ class KuhnPoker3(AlternatingGame):
     def available_actions(self):
         return list(range(self._num_actions))
 
+    def random_change(self, agent: AgentID):
+        agent_idx = self.agent_name_mapping[agent]
+        agent_card = self._hand[agent_idx]
+        other_idxs = [idx for idx in range(self.num_agents) if idx != agent_idx]
+        other_cards = [card for card in self._cards if card != agent_card]
+
+        new_game = self.clone()
+        new_game._hand[other_idxs] = np.random.choice(other_cards, size=len(other_idxs), replace=False)
+        return new_game
+
     def action_move(self, action: ActionType) -> str:
         if action not in range(self._num_actions):
             raise ValueError(f"{action} is not a legal action.")
